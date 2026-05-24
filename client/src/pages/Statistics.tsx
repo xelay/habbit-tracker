@@ -70,20 +70,21 @@ function Heatmap({ habits }: { habits: Habit[] }) {
 
   const today = new Date();
 
-  // Строим массив 84 ячеек (12 недель × 7)
-  const cells: { date: string }[] = [];
+  const cells: { date: string; isWeekend: boolean }[] = [];
   for (let i = 83; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
-    cells.push({ date: d.toISOString().split("T")[0] });
+    const dow = d.getDay(); // 0=вс, 6=сб
+    cells.push({
+      date: d.toISOString().split("T")[0],
+      isWeekend: dow === 0 || dow === 6,
+    });
   }
 
-  // Сеты для быстрого поиска
   const boolLogs = getAllLogs();
   const counterLogs = getAllCounterLogs();
   const habitMap = new Map(habits.map((h) => [h.id, h]));
 
-  // Для режима beneficial/harmful: дни где есть лог нужного типа
   const activeDatesByType = (type: "beneficial" | "harmful"): Set<string> => {
     const s = new Set<string>();
     for (const l of boolLogs) {
@@ -95,7 +96,6 @@ function Heatmap({ habits }: { habits: Habit[] }) {
     return s;
   };
 
-  // Для режима отдельной привычки
   const activeDatesForHabit = (habitId: string): Set<string> => {
     const h = habitMap.get(habitId);
     if (!h) return new Set();
@@ -112,7 +112,6 @@ function Heatmap({ habits }: { habits: Habit[] }) {
     return s;
   };
 
-  // Активные даты и цвет для текущего режима
   let activeDates: Set<string>;
   let activeColor: string;
   let selectedHabit: Habit | null = null;
@@ -130,42 +129,32 @@ function Heatmap({ habits }: { habits: Habit[] }) {
       : "bg-red-400 dark:bg-red-500";
   }
 
-  const weeks: { date: string }[][] = [];
+  const weeks: { date: string; isWeekend: boolean }[][] = [];
   for (let w = 0; w < 12; w++) weeks.push(cells.slice(w * 7, w * 7 + 7));
 
   const beneficialHabits = habits.filter((h) => h.type === "beneficial");
   const harmfulHabits = habits.filter((h) => h.type === "harmful");
 
   const btnBase = "rounded-xl border px-2.5 py-1.5 text-xs font-medium transition-colors whitespace-nowrap";
-  const btnActive = (isActive: boolean, color: "green" | "red" | "primary") => {
+  const btnCls = (isActive: boolean, color: "green" | "red") => {
     if (!isActive) return `${btnBase} border-border text-muted-foreground hover:text-foreground`;
     if (color === "green") return `${btnBase} border-green-500 bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400`;
-    if (color === "red") return `${btnBase} border-red-500 bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400`;
-    return `${btnBase} border-primary bg-primary/10 text-primary`;
+    return `${btnBase} border-red-500 bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400`;
   };
 
   return (
     <div className="space-y-3">
-      {/* Фильтры — полезные / вредные */}
+      {/* Фильтры */}
       <div className="flex flex-wrap gap-1.5">
-        <button
-          onClick={() => setMode({ kind: "beneficial" })}
-          className={btnActive(mode.kind === "beneficial" && (mode as {kind:string}).kind !== "habit" || false, "green")}
-          // Переписываем это определение ниже
-        >
+        <button onClick={() => setMode({ kind: "beneficial" })} className={btnCls(mode.kind === "beneficial", "green")}>
           🟢 Полезные
         </button>
-        <button
-          onClick={() => setMode({ kind: "harmful" })}
-          className={btnActive(mode.kind === "harmful", "red")}
-        >
+        <button onClick={() => setMode({ kind: "harmful" })} className={btnCls(mode.kind === "harmful", "red")}>
           🔴 Вредные
         </button>
-        {/* Разделитель */}
         {(beneficialHabits.length > 0 || harmfulHabits.length > 0) && (
           <span className="self-center text-border mx-0.5">|</span>
         )}
-        {/* Кнопки по каждой привычке */}
         {[...beneficialHabits, ...harmfulHabits].map((h) => {
           const isSelected = mode.kind === "habit" && (mode as { kind: string; habit: Habit }).habit.id === h.id;
           const color = h.type === "beneficial" ? "green" : "red";
@@ -173,7 +162,7 @@ function Heatmap({ habits }: { habits: Habit[] }) {
             <button
               key={h.id}
               onClick={() => setMode(isSelected ? { kind: h.type } : { kind: "habit", habit: h })}
-              className={btnActive(isSelected, color)}
+              className={btnCls(isSelected, color)}
               title={h.name}
             >
               {h.icon}
@@ -188,15 +177,18 @@ function Heatmap({ habits }: { habits: Habit[] }) {
           <div key={wi} className="flex flex-col gap-1 flex-1">
             {week.map((cell) => {
               const isActive = activeDates.has(cell.date);
+              // Неактивная выходная: чуть темнее чем обычные будние — еле заметно
+              const idleCls = cell.isWeekend
+                ? "bg-muted/70 ring-1 ring-inset ring-border/60"
+                : "bg-muted";
               return (
                 <div
                   key={cell.date}
                   title={cell.date}
                   className={`rounded-[3px] aspect-square flex items-center justify-center overflow-hidden ${
-                    isActive ? activeColor : "bg-muted"
+                    isActive ? activeColor : idleCls
                   }`}
                 >
-                  {/* В режиме отдельной привычки показываем иконку */}
                   {isActive && selectedHabit && (
                     <span className="text-[9px] leading-none select-none" role="img">
                       {selectedHabit.icon}
@@ -213,15 +205,15 @@ function Heatmap({ habits }: { habits: Habit[] }) {
       <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
         <span className="flex items-center gap-1">
           <span className={`w-2.5 h-2.5 rounded-sm inline-block ${activeColor}`} />
-          {mode.kind === "habit"
-            ? selectedHabit!.name
-            : mode.kind === "beneficial"
-            ? "Есть запись"
-            : "Есть запись"}
+          {mode.kind === "habit" ? selectedHabit!.name : "Есть запись"}
         </span>
         <span className="flex items-center gap-1">
           <span className="w-2.5 h-2.5 rounded-sm bg-muted inline-block" />
           Нет данных
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-sm bg-muted/70 ring-1 ring-inset ring-border/60 inline-block" />
+          Сб/Вс
         </span>
       </div>
     </div>

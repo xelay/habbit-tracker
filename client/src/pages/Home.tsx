@@ -104,7 +104,6 @@ function CounterHabitButton({
     pressTimer.current = setTimeout(() => {
       didLongPress.current = true;
       onReset(habit.id);
-      // Haptic feedback для PWA если доступно
       if (navigator.vibrate) navigator.vibrate([40, 30, 40]);
     }, 500);
   };
@@ -117,20 +116,17 @@ function CounterHabitButton({
   };
 
   const handleClick = () => {
-    if (didLongPress.current) return; // long press уже обработан
+    if (didLongPress.current) return;
     onIncrement(habit.id);
     if (navigator.vibrate) navigator.vibrate(20);
   };
-
-  // Отменяем таймер если палец ушёл за пределы кнопки
-  const handlePointerLeave = () => endPress();
 
   return (
     <button
       className={`habit-btn ${stateClass} select-none`}
       onPointerDown={startPress}
       onPointerUp={endPress}
-      onPointerLeave={handlePointerLeave}
+      onPointerLeave={endPress}
       onPointerCancel={endPress}
       onClick={handleClick}
       data-testid={`habit-btn-${habit.id}`}
@@ -143,7 +139,6 @@ function CounterHabitButton({
       <span className="text-sm font-medium text-center leading-tight">
         {habit.name}
       </span>
-      {/* Счётчик — крупно в правом верхнем углу */}
       <span
         className={`absolute top-1.5 right-2 text-sm font-bold tabular-nums ${
           isActive ? "opacity-90" : "opacity-30"
@@ -156,6 +151,22 @@ function CounterHabitButton({
   );
 }
 
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+// Читает счётчики напрямую из localStorage — не зависит от React-стейта habits.
+// Это исправляет баг когда компонент монтируется заново (навигация туда-обратно)
+// и второй useEffect срабатывает раньше чем setHabits() применился.
+function loadCountersFromStorage(date: string): Record<string, number> {
+  const habits = getAllHabits();
+  const map: Record<string, number> = {};
+  for (const h of habits) {
+    if (getTrackingType(h) === "counter") {
+      map[h.id] = getCounterForDate(h.id, date);
+    }
+  }
+  return map;
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -163,47 +174,29 @@ export default function Home() {
   const [currentDate, setCurrentDate] = useState(today);
   const [habits, setHabits] = useState<Habit[]>([]);
   const [loggedIds, setLoggedIds] = useState<string[]>([]);
-  // counter values: habitId → count
   const [counters, setCounters] = useState<Record<string, number>>({});
 
   const isToday = currentDate === today;
   const canGoForward = currentDate < today;
 
-  const reloadLogs = useCallback((date: string) => {
-    setLoggedIds(getLoggedHabitsForDate(date));
-  }, []);
-
-  const reloadCounters = useCallback((date: string, habitList: Habit[]) => {
-    const map: Record<string, number> = {};
-    for (const h of habitList) {
-      if (getTrackingType(h) === "counter") {
-        map[h.id] = getCounterForDate(h.id, date);
-      }
-    }
-    setCounters(map);
-  }, []);
-
-  useEffect(() => {
+  const reloadAll = useCallback((date: string) => {
     const h = getAllHabits();
     setHabits(h);
-    reloadCounters(currentDate, h);
+    setLoggedIds(getLoggedHabitsForDate(date));
+    setCounters(loadCountersFromStorage(date));
   }, []);
 
+  // Маунт и при смене даты — всегда читаем свежие данные из localStorage
   useEffect(() => {
-    reloadLogs(currentDate);
-    reloadCounters(currentDate, habits);
-  }, [currentDate, reloadLogs]);
+    reloadAll(currentDate);
+  }, [currentDate, reloadAll]);
 
+  // Синхронизация обновила localStorage — перечитываем
   useEffect(() => {
-    const onSyncUpdated = () => {
-      const h = getAllHabits();
-      setHabits(h);
-      reloadLogs(currentDate);
-      reloadCounters(currentDate, h);
-    };
+    const onSyncUpdated = () => reloadAll(currentDate);
     window.addEventListener("sync:updated", onSyncUpdated);
     return () => window.removeEventListener("sync:updated", onSyncUpdated);
-  }, [currentDate, reloadLogs]);
+  }, [currentDate, reloadAll]);
 
   const goBack = () => setCurrentDate((d) => offsetDate(d, -1));
   const goForward = () => { if (canGoForward) setCurrentDate((d) => offsetDate(d, 1)); };
@@ -215,7 +208,7 @@ export default function Home() {
       ? { type: "unlog", habitId: id, date: currentDate }
       : { type: "log",   habitId: id, date: currentDate };
     toggleHabitForDate(id, currentDate);
-    reloadLogs(currentDate);
+    setLoggedIds(getLoggedHabitsForDate(currentDate));
     syncWithGyxi(intent);
   };
 

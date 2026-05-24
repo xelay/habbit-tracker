@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- iOS требует viewport без maximum-scale для корректного PWA -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="Отслеживай полезные и вредные привычки каждый день" />
+
+    <!-- ── Android PWA ── -->
+    <meta name="theme-color" content="#0d0f14" />
+    <link rel="manifest" href="./manifest.json" />
+
+    <!-- ── iOS PWA — без этих тегов "Добавить на экран" НЕ работает как PWA ── -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Привычки" />
+
+    <!-- Иконки: iOS читает ТОЛЬКО apple-touch-icon, manifest игнорирует -->
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="120x120" href="./icon-120.png" />
+    <link rel="apple-touch-icon" sizes="152x152" href="./icon-152.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+
+    <!-- Favicon для браузера -->
+    <link rel="icon" type="image/png" href="./favicon.png" />
+
+    <!-- Satoshi from Fontshare -->
+    <link rel="preconnect" href="https://api.fontshare.com" />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&display=swap"
+      rel="stylesheet"
+    />
+
+    <title>Трекер привычек</title>
+
+    <!-- ── iOS safe-area: компенсируем notch/Dynamic Island ── -->
+    <style>
+      :root {
+        --safe-top: env(safe-area-inset-top);
+        --safe-bottom: env(safe-area-inset-bottom);
+        --safe-left: env(safe-area-inset-left);
+        --safe-right: env(safe-area-inset-right);
+      }
+      body {
+        /* Горизонтальные отступы для notch */
+        padding-left: env(safe-area-inset-left);
+        padding-right: env(safe-area-inset-right);
+        /* Нижний отступ для home indicator */
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+      /* sticky header учитывает Dynamic Island / notch сверху */
+      header {
+        padding-top: calc(env(safe-area-inset-top) + 0.5rem) !important;
+      }
+    </style>
+    <script type="module" crossorigin src="./assets/index-BmWWx8qh.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-D06czkXW.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Register Service Worker
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          // Определяем базовый путь автоматически — работает и на GitHub Pages,
+          // и на любом другом хостинге без изменения кода
+          var base = location.pathname.replace(/\/[^/]*$/, '') + '/';
+          navigator.serviceWorker.register(base + 'sw.js', { scope: base }).catch(console.error);
+        });
+      }
+    </script>
+  </body>
+</html>

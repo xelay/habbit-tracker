@@ -81,7 +81,7 @@ export const ICON_CATALOG = [
   { icon: "🪜", label: "Лестница" },
   { icon: "🤸", label: "Растяжка" },
   { icon: "📓", label: "Дневник" },
-  { icon: "🚫🍬", label: "Без сахара" },
+  { icon: "🍭", label: "Без сахара" },
   { icon: "🧊", label: "Холодная вода" },
   { icon: "🫸", label: "Отжимания" },
   { icon: "🐕", label: "Выгул собаки" },

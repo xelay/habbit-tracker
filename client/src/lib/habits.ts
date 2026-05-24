@@ -77,6 +77,15 @@ export const ICON_CATALOG = [
   { icon: "⚡", label: "Энергетик" },
   { icon: "🚗", label: "Машина" },
   { icon: "🤝", label: "Помог кому-то" },
+  // Третья порция
+  { icon: "🪜", label: "Лестница" },
+  { icon: "🤸", label: "Растяжка" },
+  { icon: "📓", label: "Дневник" },
+  { icon: "🚫🍬", label: "Без сахара" },
+  { icon: "🧊", label: "Холодная вода" },
+  { icon: "🫸", label: "Отжимания" },
+  { icon: "🐕", label: "Выгул собаки" },
+  { icon: "👁️", label: "Отдых для глаз" },
 ];
 
 const STORAGE_KEYS = {
@@ -339,8 +348,7 @@ export function getHabitStats(): HabitStat[] {
       const d = new Date(today);
       d.setDate(d.getDate() - i);
       const ds = d.toISOString().split("T")[0];
-      if (logDates.has(ds)) streak++;
-      else break;
+      if (logDates.has(ds)) streak++; else break;
     }
 
     // Best streak

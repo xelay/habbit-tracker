@@ -62,7 +62,6 @@ export const ICON_CATALOG = [
   { icon: "🛁", label: "Ванна" },
   { icon: "🌅", label: "Ранний подъём" },
   { icon: "🍫", label: "Сладкое" },
-  // Вторая порция
   { icon: "😵", label: "Плохой сон" },
   { icon: "🥤", label: "Без алкоголя" },
   { icon: "🚭", label: "Без сигарет" },
@@ -87,7 +86,6 @@ export const ICON_CATALOG = [
   { icon: "⚡", label: "Энергетик" },
   { icon: "🚗", label: "Машина" },
   { icon: "🤝", label: "Помог кому-то" },
-  // Третья порция
   { icon: "🪜", label: "Лестница" },
   { icon: "🤸", label: "Растяжка" },
   { icon: "📓", label: "Дневник" },
@@ -148,7 +146,6 @@ export function deleteCustomHabit(id: string): void {
   saveCustomHabits(customs);
   const logs = getAllLogs().filter((l) => l.habitId !== id);
   localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(logs));
-  // Также удаляем counter-логи
   const cLogs = getAllCounterLogs().filter((l) => l.habitId !== id);
   localStorage.setItem(STORAGE_KEYS.COUNTER_LOGS, JSON.stringify(cLogs));
   try {
@@ -312,7 +309,6 @@ export function getWeeklyStats(): {
     else harmful++;
   }
 
-  // Counter habits: день считается "выполненным" если count > 0
   const counterLogs = getAllCounterLogs();
   for (const cl of counterLogs) {
     if (cl.count <= 0) continue;
@@ -346,6 +342,9 @@ export interface DayStats {
   date: string;
   beneficial: number;
   harmful: number;
+  // иконки привычек за этот день
+  beneficialIcons: string[];
+  harmfulIcons: string[];
 }
 
 export interface HabitStat {
@@ -354,7 +353,6 @@ export interface HabitStat {
   lastWeek: number;
   streak: number;
   bestStreak: number;
-  // для counter:
   totalCount?: number;
   lastWeekCount?: number;
 }
@@ -380,21 +378,27 @@ export function getDailyStats(days = 30): DayStats[] {
   return dates.map((date) => {
     const dayLogs = logs.filter((l) => l.date === date);
     const dayCounters = counterLogs.filter((l) => l.date === date && l.count > 0);
-    let beneficial = 0;
-    let harmful = 0;
+    const beneficialIcons: string[] = [];
+    const harmfulIcons: string[] = [];
     for (const log of dayLogs) {
       const h = habitMap.get(log.habitId);
       if (!h) continue;
-      if (h.type === "beneficial") beneficial++;
-      else harmful++;
+      if (h.type === "beneficial") beneficialIcons.push(h.icon);
+      else harmfulIcons.push(h.icon);
     }
     for (const cl of dayCounters) {
       const h = habitMap.get(cl.habitId);
       if (!h) continue;
-      if (h.type === "beneficial") beneficial++;
-      else harmful++;
+      if (h.type === "beneficial") beneficialIcons.push(h.icon);
+      else harmfulIcons.push(h.icon);
     }
-    return { date, beneficial, harmful };
+    return {
+      date,
+      beneficial: beneficialIcons.length,
+      harmful: harmfulIcons.length,
+      beneficialIcons,
+      harmfulIcons,
+    };
   });
 }
 
@@ -441,7 +445,6 @@ export function getHabitStats(): HabitStat[] {
       return { habit, total, lastWeek, streak, bestStreak: best, totalCount, lastWeekCount };
     }
 
-    // bool habit
     const habitLogs = logs.filter((l) => l.habitId === habit.id);
     const logDates = new Set(habitLogs.map((l) => l.date));
     const total = logDates.size;

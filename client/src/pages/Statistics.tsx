@@ -16,49 +16,93 @@ import {
   type Habit,
 } from "@/lib/habits";
 
-// ─── Micro bar chart ─────────────────────────────────────────────────────────────
+// ─── Activity Chart (last 14 days) ───────────────────────────────────────────
+// Каждая колонка дня разбита на стопки иконок привычек.
+// Полезные — сверху (зелёный фон), вредные — снизу (красный фон).
+// Высота одной «плитки» фиксированная, общая высота колонки = кол-во привычек.
 
-function MiniBar({ value, max, type, totalHeight }: {
-  value: number; max: number; type: "beneficial" | "harmful"; totalHeight: number;
-}) {
-  const pct = max === 0 ? 0 : value / max;
-  const barPx = Math.max(Math.round(pct * totalHeight), 3);
+const TILE_PX = 20; // высота одной иконки-плитки
+const MAX_TILES = 6;  // ограничиваем видимую высоту
+
+function IconTile({ icon, color }: { icon: string; color: "green" | "red" }) {
   return (
     <div
-      className={`w-full rounded-sm transition-all ${
-        type === "beneficial" ? "bg-green-500 dark:bg-green-400" : "bg-red-400 dark:bg-red-500"
+      className={`w-full flex items-center justify-center rounded-sm text-[11px] leading-none select-none ${
+        color === "green"
+          ? "bg-green-500/20 dark:bg-green-400/20"
+          : "bg-red-400/20 dark:bg-red-500/20"
       }`}
-      style={{ height: `${barPx}px` }}
-    />
+      style={{ height: `${TILE_PX}px` }}
+    >
+      {icon}
+    </div>
+  );
+}
+
+function DayColumn({ day }: { day: DayStats }) {
+  const allIcons = [
+    ...day.beneficialIcons.map((icon) => ({ icon, color: "green" as const })),
+    ...day.harmfulIcons.map((icon) => ({ icon, color: "red" as const })),
+  ];
+
+  // Разбиваем: сначала полезные (сверху), потом вредные (снизу)
+  const beneficial = day.beneficialIcons.slice(0, MAX_TILES);
+  const harmful = day.harmfulIcons.slice(0, Math.max(0, MAX_TILES - beneficial.length));
+  const isEmpty = beneficial.length === 0 && harmful.length === 0;
+  const totalOriginal = day.beneficialIcons.length + day.harmfulIcons.length;
+  const totalShown = beneficial.length + harmful.length;
+  const overflow = totalOriginal - totalShown;
+
+  const label = new Date(day.date).toLocaleDateString("ru-RU", { weekday: "narrow" });
+
+  return (
+    <div className="flex-1 flex flex-col items-stretch gap-0.5" title={day.date}>
+      {/* Пустой спейсер чтобы выровнять по нижнему краю */}
+      <div
+        className="flex-1"
+        style={{ minHeight: `${TILE_PX * (MAX_TILES - beneficial.length - harmful.length)}px` }}
+      />
+      {/* Полезные плитки */}
+      {beneficial.map((icon, i) => (
+        <IconTile key={`b-${i}`} icon={icon} color="green" />
+      ))}
+      {/* Вредные плитки */}
+      {harmful.map((icon, i) => (
+        <IconTile key={`h-${i}`} icon={icon} color="red" />
+      ))}
+      {/* Если совсем пусто — тонкая черта */}
+      {isEmpty && (
+        <div className="w-full rounded-sm bg-muted" style={{ height: "3px" }} />
+      )}
+      {/* Индикатор переполнения */}
+      {overflow > 0 && (
+        <div className="text-center text-[8px] text-muted-foreground leading-none">
+          +{overflow}
+        </div>
+      )}
+      {/* Метка дня */}
+      <div className="text-center text-[9px] text-muted-foreground mt-1">{label}</div>
+    </div>
   );
 }
 
 function ActivityChart({ data }: { data: DayStats[] }) {
-  const maxBeneficial = Math.max(...data.map((d) => d.beneficial), 1);
-  const maxHarmful = Math.max(...data.map((d) => d.harmful), 1);
   const last14 = data.slice(-14);
   return (
     <div>
-      <div className="flex items-end gap-1">
+      <div
+        className="flex items-end gap-1"
+        style={{ height: `${TILE_PX * MAX_TILES + 4}px` }}
+      >
         {last14.map((day) => (
-          <div key={day.date} className="flex-1 flex flex-col justify-end gap-0.5">
-            {day.beneficial > 0 && <MiniBar value={day.beneficial} max={maxBeneficial} type="beneficial" totalHeight={56} />}
-            {day.harmful > 0 && <MiniBar value={day.harmful} max={maxHarmful} type="harmful" totalHeight={56} />}
-          </div>
-        ))}
-      </div>
-      <div className="flex gap-1 mt-1.5">
-        {last14.map((day) => (
-          <div key={day.date} className="flex-1 text-center text-[9px] text-muted-foreground">
-            {new Date(day.date).toLocaleDateString("ru-RU", { weekday: "narrow" })}
-          </div>
+          <DayColumn key={day.date} day={day} />
         ))}
       </div>
     </div>
   );
 }
 
-// ─── Heatmap (interactive) ───────────────────────────────────────────────────────────
+// ─── Heatmap (interactive) ───────────────────────────────────────────────────
 
 type HeatmapMode =
   | { kind: "beneficial" }
@@ -74,7 +118,7 @@ function Heatmap({ habits }: { habits: Habit[] }) {
   for (let i = 83; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
-    const dow = d.getDay(); // 0=вс, 6=сб
+    const dow = d.getDay();
     cells.push({
       date: d.toISOString().split("T")[0],
       isWeekend: dow === 0 || dow === 6,
@@ -144,7 +188,6 @@ function Heatmap({ habits }: { habits: Habit[] }) {
 
   return (
     <div className="space-y-3">
-      {/* Фильтры */}
       <div className="flex flex-wrap gap-1.5">
         <button onClick={() => setMode({ kind: "beneficial" })} className={btnCls(mode.kind === "beneficial", "green")}>
           🟢 Полезные
@@ -171,13 +214,11 @@ function Heatmap({ habits }: { habits: Habit[] }) {
         })}
       </div>
 
-      {/* Сетка */}
       <div className="flex gap-1">
         {weeks.map((week, wi) => (
           <div key={wi} className="flex flex-col gap-1 flex-1">
             {week.map((cell) => {
               const isActive = activeDates.has(cell.date);
-              // Неактивная выходная: чуть темнее чем обычные будние — еле заметно
               const idleCls = cell.isWeekend
                 ? "bg-muted/70 ring-1 ring-inset ring-border/60"
                 : "bg-muted";
@@ -201,7 +242,6 @@ function Heatmap({ habits }: { habits: Habit[] }) {
         ))}
       </div>
 
-      {/* Легенда */}
       <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
         <span className="flex items-center gap-1">
           <span className={`w-2.5 h-2.5 rounded-sm inline-block ${activeColor}`} />
@@ -220,7 +260,7 @@ function Heatmap({ habits }: { habits: Habit[] }) {
   );
 }
 
-// ─── Stat card ─────────────────────────────────────────────────────────────────
+// ─── Stat card ────────────────────────────────────────────────────────────────
 
 function StatCard({ icon, label, value, sub }: {
   icon: React.ReactNode; label: string; value: string | number; sub?: string;
@@ -237,7 +277,7 @@ function StatCard({ icon, label, value, sub }: {
   );
 }
 
-// ─── Per-habit row ─────────────────────────────────────────────────────────────
+// ─── Per-habit row ────────────────────────────────────────────────────────────
 
 function HabitStatRow({ stat }: { stat: HabitStat }) {
   const { habit, total, lastWeek, streak } = stat;
@@ -336,9 +376,9 @@ export default function Statistics() {
               <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Активность за 14 дней</h2>
               <div className="rounded-2xl border border-border bg-card p-4">
                 <ActivityChart data={dailyStats} />
-                <div className="flex gap-4 mt-3 text-[10px] text-muted-foreground">
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-green-500 inline-block" />Полезные</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-red-400 inline-block" />Вредные</span>
+                <div className="flex gap-4 mt-2 text-[10px] text-muted-foreground">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-green-500/20 inline-block" />Полезные</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-red-400/20 inline-block" />Вредные</span>
                 </div>
               </div>
             </section>

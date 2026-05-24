@@ -17,12 +17,9 @@ import {
 } from "@/lib/habits";
 
 // ─── Activity Chart (last 14 days) ───────────────────────────────────────────
-// Каждая колонка дня разбита на стопки иконок привычек.
-// Полезные — сверху (зелёный фон), вредные — снизу (красный фон).
-// Высота одной «плитки» фиксированная, общая высота колонки = кол-во привычек.
 
-const TILE_PX = 20; // высота одной иконки-плитки
-const MAX_TILES = 6;  // ограничиваем видимую высоту
+const TILE_PX = 20;
+const MAX_TILES = 6;
 
 function IconTile({ icon, color }: { icon: string; color: "green" | "red" }) {
   return (
@@ -40,47 +37,19 @@ function IconTile({ icon, color }: { icon: string; color: "green" | "red" }) {
 }
 
 function DayColumn({ day }: { day: DayStats }) {
-  const allIcons = [
-    ...day.beneficialIcons.map((icon) => ({ icon, color: "green" as const })),
-    ...day.harmfulIcons.map((icon) => ({ icon, color: "red" as const })),
-  ];
-
-  // Разбиваем: сначала полезные (сверху), потом вредные (снизу)
   const beneficial = day.beneficialIcons.slice(0, MAX_TILES);
   const harmful = day.harmfulIcons.slice(0, Math.max(0, MAX_TILES - beneficial.length));
   const isEmpty = beneficial.length === 0 && harmful.length === 0;
-  const totalOriginal = day.beneficialIcons.length + day.harmfulIcons.length;
-  const totalShown = beneficial.length + harmful.length;
-  const overflow = totalOriginal - totalShown;
-
+  const overflow = (day.beneficialIcons.length + day.harmfulIcons.length) - (beneficial.length + harmful.length);
   const label = new Date(day.date).toLocaleDateString("ru-RU", { weekday: "narrow" });
 
   return (
     <div className="flex-1 flex flex-col items-stretch gap-0.5" title={day.date}>
-      {/* Пустой спейсер чтобы выровнять по нижнему краю */}
-      <div
-        className="flex-1"
-        style={{ minHeight: `${TILE_PX * (MAX_TILES - beneficial.length - harmful.length)}px` }}
-      />
-      {/* Полезные плитки */}
-      {beneficial.map((icon, i) => (
-        <IconTile key={`b-${i}`} icon={icon} color="green" />
-      ))}
-      {/* Вредные плитки */}
-      {harmful.map((icon, i) => (
-        <IconTile key={`h-${i}`} icon={icon} color="red" />
-      ))}
-      {/* Если совсем пусто — тонкая черта */}
-      {isEmpty && (
-        <div className="w-full rounded-sm bg-muted" style={{ height: "3px" }} />
-      )}
-      {/* Индикатор переполнения */}
-      {overflow > 0 && (
-        <div className="text-center text-[8px] text-muted-foreground leading-none">
-          +{overflow}
-        </div>
-      )}
-      {/* Метка дня */}
+      <div className="flex-1" style={{ minHeight: `${TILE_PX * (MAX_TILES - beneficial.length - harmful.length)}px` }} />
+      {beneficial.map((icon, i) => <IconTile key={`b-${i}`} icon={icon} color="green" />)}
+      {harmful.map((icon, i) => <IconTile key={`h-${i}`} icon={icon} color="red" />)}
+      {isEmpty && <div className="w-full rounded-sm bg-muted" style={{ height: "3px" }} />}
+      {overflow > 0 && <div className="text-center text-[8px] text-muted-foreground leading-none">+{overflow}</div>}
       <div className="text-center text-[9px] text-muted-foreground mt-1">{label}</div>
     </div>
   );
@@ -90,38 +59,39 @@ function ActivityChart({ data }: { data: DayStats[] }) {
   const last14 = data.slice(-14);
   return (
     <div>
-      <div
-        className="flex items-end gap-1"
-        style={{ height: `${TILE_PX * MAX_TILES + 4}px` }}
-      >
-        {last14.map((day) => (
-          <DayColumn key={day.date} day={day} />
-        ))}
+      <div className="flex items-end gap-1" style={{ height: `${TILE_PX * MAX_TILES + 4}px` }}>
+        {last14.map((day) => <DayColumn key={day.date} day={day} />)}
       </div>
     </div>
   );
 }
 
-// ─── Heatmap (interactive) ───────────────────────────────────────────────────
+// ─── Heatmap (interactive) ──────────────────────────────────────────────────
 
 type HeatmapMode =
   | { kind: "beneficial" }
   | { kind: "harmful" }
   | { kind: "habit"; habit: Habit };
 
+// Дни недели в порядке строк хитмапа (строка 0 = первый день недели в первой колонке)
+// getDay(): 0=вс, 1=пн, ..., 6=сб. Переводим в понедельный порядок (пн=0 ... вс=6)
+const WEEKDAY_LABELS = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
+
 function Heatmap({ habits }: { habits: Habit[] }) {
   const [mode, setMode] = useState<HeatmapMode>({ kind: "beneficial" });
 
   const today = new Date();
 
-  const cells: { date: string; isWeekend: boolean }[] = [];
+  const cells: { date: string; isWeekend: boolean; rowIndex: number }[] = [];
   for (let i = 83; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
-    const dow = d.getDay();
+    const dow = d.getDay(); // 0=вс, 1=пн...
+    const rowIndex = dow === 0 ? 6 : dow - 1; // пн=0 ... вс=6
     cells.push({
       date: d.toISOString().split("T")[0],
       isWeekend: dow === 0 || dow === 6,
+      rowIndex,
     });
   }
 
@@ -173,8 +143,19 @@ function Heatmap({ habits }: { habits: Habit[] }) {
       : "bg-red-400 dark:bg-red-500";
   }
 
-  const weeks: { date: string; isWeekend: boolean }[][] = [];
-  for (let w = 0; w < 12; w++) weeks.push(cells.slice(w * 7, w * 7 + 7));
+  // Перестраиваем ячейки в 12 недель, каждая неделя уже 7 ячеек сортированных по rowIndex
+  const weeksRaw: { date: string; isWeekend: boolean; rowIndex: number }[][] = [];
+  for (let w = 0; w < 12; w++) weeksRaw.push(cells.slice(w * 7, w * 7 + 7));
+
+  // Для корректного рендера строк нужные 7 строк в каждой колонке.
+  // Строим массив 7 строк × 12 недель — транспонируем.
+  type CellOrNull = { date: string; isWeekend: boolean } | null;
+  const grid: CellOrNull[][] = Array.from({ length: 7 }, () => Array(12).fill(null));
+  weeksRaw.forEach((week, wi) => {
+    week.forEach((cell) => {
+      grid[cell.rowIndex][wi] = { date: cell.date, isWeekend: cell.isWeekend };
+    });
+  });
 
   const beneficialHabits = habits.filter((h) => h.type === "beneficial");
   const harmfulHabits = habits.filter((h) => h.type === "harmful");
@@ -188,6 +169,7 @@ function Heatmap({ habits }: { habits: Habit[] }) {
 
   return (
     <div className="space-y-3">
+      {/* Фильтры */}
       <div className="flex flex-wrap gap-1.5">
         <button onClick={() => setMode({ kind: "beneficial" })} className={btnCls(mode.kind === "beneficial", "green")}>
           🟢 Полезные
@@ -214,34 +196,57 @@ function Heatmap({ habits }: { habits: Habit[] }) {
         })}
       </div>
 
+      {/* Сетка с метками дней недели справа */}
       <div className="flex gap-1">
-        {weeks.map((week, wi) => (
-          <div key={wi} className="flex flex-col gap-1 flex-1">
-            {week.map((cell) => {
-              const isActive = activeDates.has(cell.date);
-              const idleCls = cell.isWeekend
-                ? "bg-muted/70 ring-1 ring-inset ring-border/60"
-                : "bg-muted";
-              return (
-                <div
-                  key={cell.date}
-                  title={cell.date}
-                  className={`rounded-[3px] aspect-square flex items-center justify-center overflow-hidden ${
-                    isActive ? activeColor : idleCls
-                  }`}
-                >
-                  {isActive && selectedHabit && (
-                    <span className="text-[9px] leading-none select-none" role="img">
-                      {selectedHabit.icon}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        ))}
+        {/* Ячейки */}
+        <div className="flex flex-col gap-1" style={{ width: '12px' }}>
+          {WEEKDAY_LABELS.map((label) => (
+            <div
+              key={label}
+              className="flex items-center justify-end text-[8px] text-muted-foreground leading-none"
+              style={{ height: 'calc((100% - 6 * 4px) / 7)' }}
+            >
+              {label}
+            </div>
+          ))}
+        </div>
+
+        {/* Колонки недель */}
+        <div className="flex gap-1 flex-1">
+          {Array.from({ length: 12 }, (_, wi) => (
+            <div key={wi} className="flex flex-col gap-1 flex-1">
+              {grid.map((row, ri) => {
+                const cell = row[wi];
+                if (!cell) {
+                  // Пустая ячейка (начало/конец периода)
+                  return <div key={ri} className="rounded-[3px] aspect-square bg-transparent" />;
+                }
+                const isActive = activeDates.has(cell.date);
+                const idleCls = cell.isWeekend
+                  ? "bg-muted/70 ring-1 ring-inset ring-border/60"
+                  : "bg-muted";
+                return (
+                  <div
+                    key={ri}
+                    title={cell.date}
+                    className={`rounded-[3px] aspect-square flex items-center justify-center overflow-hidden ${
+                      isActive ? activeColor : idleCls
+                    }`}
+                  >
+                    {isActive && selectedHabit && (
+                      <span className="text-[9px] leading-none select-none" role="img">
+                        {selectedHabit.icon}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
       </div>
 
+      {/* Легенда */}
       <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
         <span className="flex items-center gap-1">
           <span className={`w-2.5 h-2.5 rounded-sm inline-block ${activeColor}`} />

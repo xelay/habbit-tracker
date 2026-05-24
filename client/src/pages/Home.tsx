@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Link } from "wouter";
 import { Settings, BarChart2, ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 import {
@@ -6,11 +6,15 @@ import {
   getLoggedHabitsForDate,
   toggleHabitForDate,
   getTodayString,
+  getCounterForDate,
+  incrementCounter,
+  resetCounter,
+  getTrackingType,
   type Habit,
 } from "@/lib/habits";
 import { syncWithGyxi, type SyncIntent } from "@/lib/sync";
 
-// ─── Date helpers ────────────────────────────────────────────────────────────
+// ─── Date helpers ─────────────────────────────────────────────────────────────
 
 function offsetDate(base: string, days: number): string {
   const d = new Date(base);
@@ -21,20 +25,17 @@ function offsetDate(base: string, days: number): string {
 function formatDate(dateStr: string, todayStr: string): string {
   const date = new Date(dateStr);
   const diff = Math.round(
-    (new Date(dateStr).setHours(12) - new Date(todayStr).setHours(12)) /
-      86400000
+    (new Date(dateStr).setHours(12) - new Date(todayStr).setHours(12)) / 86400000
   );
-
   const weekday = date.toLocaleDateString("ru-RU", { weekday: "long" });
   const dayMonth = date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
-
   if (diff === 0) return `Сегодня, ${dayMonth}`;
   if (diff === -1) return `Вчера, ${dayMonth}`;
   if (diff === -2) return `Позавчера, ${dayMonth}`;
   return `${weekday.charAt(0).toUpperCase() + weekday.slice(1)}, ${dayMonth}`;
 }
 
-// ─── Habit button ─────────────────────────────────────────────────────────────
+// ─── Bool Habit Button ────────────────────────────────────────────────────────
 
 function HabitButton({
   habit,
@@ -74,6 +75,87 @@ function HabitButton({
   );
 }
 
+// ─── Counter Habit Button ─────────────────────────────────────────────────────
+// Tap = +1, Long press (500ms) = сброс на 0
+
+function CounterHabitButton({
+  habit,
+  count,
+  onIncrement,
+  onReset,
+}: {
+  habit: Habit;
+  count: number;
+  onIncrement: (id: string) => void;
+  onReset: (id: string) => void;
+}) {
+  const isActive = count > 0;
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didLongPress = useRef(false);
+
+  const stateClass = isActive
+    ? habit.type === "beneficial"
+      ? "habit-btn-beneficial"
+      : "habit-btn-harmful"
+    : "habit-btn-idle";
+
+  const startPress = () => {
+    didLongPress.current = false;
+    pressTimer.current = setTimeout(() => {
+      didLongPress.current = true;
+      onReset(habit.id);
+      // Haptic feedback для PWA если доступно
+      if (navigator.vibrate) navigator.vibrate([40, 30, 40]);
+    }, 500);
+  };
+
+  const endPress = () => {
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+  };
+
+  const handleClick = () => {
+    if (didLongPress.current) return; // long press уже обработан
+    onIncrement(habit.id);
+    if (navigator.vibrate) navigator.vibrate(20);
+  };
+
+  // Отменяем таймер если палец ушёл за пределы кнопки
+  const handlePointerLeave = () => endPress();
+
+  return (
+    <button
+      className={`habit-btn ${stateClass} select-none`}
+      onPointerDown={startPress}
+      onPointerUp={endPress}
+      onPointerLeave={handlePointerLeave}
+      onPointerCancel={endPress}
+      onClick={handleClick}
+      data-testid={`habit-btn-${habit.id}`}
+      aria-label={`${habit.name}: ${count}. Нажмите для +1, удерживайте для сброса`}
+      title="Нажмите для +1 · Удержите для сброса"
+    >
+      <span className="text-3xl leading-none" role="img" aria-label={habit.name}>
+        {habit.icon}
+      </span>
+      <span className="text-sm font-medium text-center leading-tight">
+        {habit.name}
+      </span>
+      {/* Счётчик — крупно в правом верхнем углу */}
+      <span
+        className={`absolute top-1.5 right-2 text-sm font-bold tabular-nums ${
+          isActive ? "opacity-90" : "opacity-30"
+        }`}
+        aria-hidden
+      >
+        {count > 0 ? count : "0"}
+      </span>
+    </button>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -81,67 +163,93 @@ export default function Home() {
   const [currentDate, setCurrentDate] = useState(today);
   const [habits, setHabits] = useState<Habit[]>([]);
   const [loggedIds, setLoggedIds] = useState<string[]>([]);
+  // counter values: habitId → count
+  const [counters, setCounters] = useState<Record<string, number>>({});
 
   const isToday = currentDate === today;
-  // Не позволяем заходить в будущее
   const canGoForward = currentDate < today;
 
   const reloadLogs = useCallback((date: string) => {
     setLoggedIds(getLoggedHabitsForDate(date));
   }, []);
 
+  const reloadCounters = useCallback((date: string, habitList: Habit[]) => {
+    const map: Record<string, number> = {};
+    for (const h of habitList) {
+      if (getTrackingType(h) === "counter") {
+        map[h.id] = getCounterForDate(h.id, date);
+      }
+    }
+    setCounters(map);
+  }, []);
+
   useEffect(() => {
-    setHabits(getAllHabits());
+    const h = getAllHabits();
+    setHabits(h);
+    reloadCounters(currentDate, h);
   }, []);
 
   useEffect(() => {
     reloadLogs(currentDate);
+    reloadCounters(currentDate, habits);
   }, [currentDate, reloadLogs]);
 
-  // Перечитываем UI когда синхронизация записала новые данные в localStorage
   useEffect(() => {
     const onSyncUpdated = () => {
-      setHabits(getAllHabits());
+      const h = getAllHabits();
+      setHabits(h);
       reloadLogs(currentDate);
+      reloadCounters(currentDate, h);
     };
     window.addEventListener("sync:updated", onSyncUpdated);
     return () => window.removeEventListener("sync:updated", onSyncUpdated);
   }, [currentDate, reloadLogs]);
 
   const goBack = () => setCurrentDate((d) => offsetDate(d, -1));
-  const goForward = () => {
-    if (canGoForward) setCurrentDate((d) => offsetDate(d, 1));
-  };
+  const goForward = () => { if (canGoForward) setCurrentDate((d) => offsetDate(d, 1)); };
   const goToday = () => setCurrentDate(today);
 
   const handleToggle = (id: string) => {
-    // Определяем намерение по текущему локальному state (loggedIds)
     const isLogged = loggedIds.includes(id);
     const intent: SyncIntent = isLogged
       ? { type: "unlog", habitId: id, date: currentDate }
       : { type: "log",   habitId: id, date: currentDate };
-
-    // Сразу применяем локально для отзывчивости UI
     toggleHabitForDate(id, currentDate);
     reloadLogs(currentDate);
+    syncWithGyxi(intent);
+  };
 
-    // Синхронизация с intent: pull → merge → apply intent → push
-    // intent гарантирует что remote не перебьёт действие пользователя
+  const handleIncrement = (id: string) => {
+    const newCount = incrementCounter(id, currentDate);
+    setCounters((prev) => ({ ...prev, [id]: newCount }));
+    const intent: SyncIntent = { type: "counter", habitId: id, date: currentDate, count: newCount };
+    syncWithGyxi(intent);
+  };
+
+  const handleReset = (id: string) => {
+    resetCounter(id, currentDate);
+    setCounters((prev) => ({ ...prev, [id]: 0 }));
+    const intent: SyncIntent = { type: "counter", habitId: id, date: currentDate, count: 0 };
     syncWithGyxi(intent);
   };
 
   const beneficial = habits.filter((h) => h.type === "beneficial");
   const harmful = habits.filter((h) => h.type === "harmful");
-  const loggedBeneficial = beneficial.filter((h) => loggedIds.includes(h.id)).length;
-  const loggedHarmful = harmful.filter((h) => loggedIds.includes(h.id)).length;
+  const loggedBeneficial =
+    beneficial.filter((h) => {
+      if (getTrackingType(h) === "counter") return (counters[h.id] ?? 0) > 0;
+      return loggedIds.includes(h.id);
+    }).length;
+  const loggedHarmful =
+    harmful.filter((h) => {
+      if (getTrackingType(h) === "counter") return (counters[h.id] ?? 0) > 0;
+      return loggedIds.includes(h.id);
+    }).length;
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
       <header className="sticky top-0 z-10 border-b border-border bg-background/80 backdrop-blur-sm">
         <div className="mx-auto max-w-md px-4 py-3 flex items-center justify-between gap-2">
-
-          {/* Date navigation */}
           <div className="flex items-center gap-1 flex-1 min-w-0">
             <button
               onClick={goBack}
@@ -151,13 +259,11 @@ export default function Home() {
             >
               <ChevronLeft size={16} />
             </button>
-
             <div className="flex-1 min-w-0 text-center">
               <p className="text-sm font-semibold leading-tight truncate capitalize">
                 {formatDate(currentDate, today)}
               </p>
             </div>
-
             <button
               onClick={goForward}
               disabled={!canGoForward}
@@ -172,10 +278,7 @@ export default function Home() {
               <ChevronRight size={16} />
             </button>
           </div>
-
-          {/* Right icons */}
           <div className="flex items-center gap-1.5 shrink-0">
-            {/* Кнопка "Сегодня" — только когда не на сегодня */}
             {!isToday && (
               <button
                 onClick={goToday}
@@ -209,13 +312,9 @@ export default function Home() {
       </header>
 
       <main className="mx-auto max-w-md px-4 py-6 space-y-8">
-
-        {/* Past day banner */}
         {!isToday && (
           <div className="rounded-2xl border border-border bg-muted/50 px-4 py-3 flex items-center justify-between gap-3">
-            <p className="text-sm text-muted-foreground">
-              Редактирование прошлого дня
-            </p>
+            <p className="text-sm text-muted-foreground">Редактирование прошлого дня</p>
             <button
               onClick={goToday}
               className="text-xs font-medium text-primary hover:opacity-80 transition-opacity whitespace-nowrap"
@@ -226,69 +325,77 @@ export default function Home() {
           </div>
         )}
 
-        {/* Summary */}
         {habits.length > 0 && (
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-2xl border border-border bg-card p-4">
               <p className="text-xs text-muted-foreground mb-1">Полезных</p>
               <p className="text-xl font-bold" data-testid="count-beneficial">
                 {loggedBeneficial}
-                <span className="text-sm font-normal text-muted-foreground">
-                  /{beneficial.length}
-                </span>
+                <span className="text-sm font-normal text-muted-foreground">/{beneficial.length}</span>
               </p>
             </div>
             <div className="rounded-2xl border border-border bg-card p-4">
               <p className="text-xs text-muted-foreground mb-1">Вредных</p>
               <p className="text-xl font-bold" data-testid="count-harmful">
                 {loggedHarmful}
-                <span className="text-sm font-normal text-muted-foreground">
-                  /{harmful.length}
-                </span>
+                <span className="text-sm font-normal text-muted-foreground">/{harmful.length}</span>
               </p>
             </div>
           </div>
         )}
 
-        {/* Beneficial habits */}
         {beneficial.length > 0 && (
           <section>
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-              Полезные
-            </h2>
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Полезные</h2>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {beneficial.map((habit) => (
-                <HabitButton
-                  key={habit.id}
-                  habit={habit}
-                  logged={loggedIds.includes(habit.id)}
-                  onToggle={handleToggle}
-                />
-              ))}
+              {beneficial.map((habit) =>
+                getTrackingType(habit) === "counter" ? (
+                  <CounterHabitButton
+                    key={habit.id}
+                    habit={habit}
+                    count={counters[habit.id] ?? 0}
+                    onIncrement={handleIncrement}
+                    onReset={handleReset}
+                  />
+                ) : (
+                  <HabitButton
+                    key={habit.id}
+                    habit={habit}
+                    logged={loggedIds.includes(habit.id)}
+                    onToggle={handleToggle}
+                  />
+                )
+              )}
             </div>
           </section>
         )}
 
-        {/* Harmful habits */}
         {harmful.length > 0 && (
           <section>
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-              Вредные
-            </h2>
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Вредные</h2>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {harmful.map((habit) => (
-                <HabitButton
-                  key={habit.id}
-                  habit={habit}
-                  logged={loggedIds.includes(habit.id)}
-                  onToggle={handleToggle}
-                />
-              ))}
+              {harmful.map((habit) =>
+                getTrackingType(habit) === "counter" ? (
+                  <CounterHabitButton
+                    key={habit.id}
+                    habit={habit}
+                    count={counters[habit.id] ?? 0}
+                    onIncrement={handleIncrement}
+                    onReset={handleReset}
+                  />
+                ) : (
+                  <HabitButton
+                    key={habit.id}
+                    habit={habit}
+                    logged={loggedIds.includes(habit.id)}
+                    onToggle={handleToggle}
+                  />
+                )
+              )}
             </div>
           </section>
         )}
 
-        {/* Empty state */}
         {habits.length === 0 && (
           <div className="text-center py-16">
             <p className="text-4xl mb-4">🎯</p>

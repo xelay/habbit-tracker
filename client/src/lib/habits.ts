@@ -1,20 +1,30 @@
 // Habit types and localStorage storage layer
 
 export type HabitType = "harmful" | "beneficial";
+export type TrackingType = "bool" | "counter";
 
 export interface Habit {
   id: string;
   name: string;
-  icon: string; // emoji or icon name
+  icon: string;
   type: HabitType;
+  trackingType?: TrackingType; // undefined → "bool" (backward-compat)
   isPreset: boolean;
-  updatedAt?: number; // timestamp последнего изменения — используется sync merge
+  updatedAt?: number;
 }
 
 export interface HabitLog {
   habitId: string;
   date: string; // YYYY-MM-DD
   timestamp: number;
+}
+
+// Counter log: отдельное хранилище для счётчиков
+export interface CounterLog {
+  habitId: string;
+  date: string; // YYYY-MM-DD
+  count: number;
+  updatedAt: number;
 }
 
 // Preset habits
@@ -91,9 +101,15 @@ export const ICON_CATALOG = [
 const STORAGE_KEYS = {
   CUSTOM_HABITS: "habit_tracker_custom",
   LOGS: "habit_tracker_logs",
+  COUNTER_LOGS: "habit_tracker_counter_logs",
   SELECTED_PRESETS: "habit_tracker_selected_presets",
   PUSH_PERM: "habit_tracker_push",
 };
+
+// ─── Helper ────────────────────────────────────────────────────────────────
+export function getTrackingType(habit: Habit): TrackingType {
+  return habit.trackingType ?? "bool";
+}
 
 // Custom habits CRUD
 export function getCustomHabits(): Habit[] {
@@ -119,10 +135,8 @@ export function addCustomHabit(habit: Omit<Habit, "isPreset">): Habit {
 
 export function updateCustomHabit(
   id: string,
-  patch: Partial<Pick<Habit, "name" | "icon" | "type">>
+  patch: Partial<Pick<Habit, "name" | "icon" | "type" | "trackingType">>
 ): void {
-  // ID не меняется — все логи по этой привычке сохраняются
-  // updatedAt обновляется чтобы sync merge знал что эта версия свежее remote
   const customs = getCustomHabits().map((h) =>
     h.id === id ? { ...h, ...patch, updatedAt: Date.now() } : h
   );
@@ -132,10 +146,11 @@ export function updateCustomHabit(
 export function deleteCustomHabit(id: string): void {
   const customs = getCustomHabits().filter((h) => h.id !== id);
   saveCustomHabits(customs);
-  // Also remove logs for this habit
   const logs = getAllLogs().filter((l) => l.habitId !== id);
   localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(logs));
-  // Write tombstone so sync never restores this habit from remote
+  // Также удаляем counter-логи
+  const cLogs = getAllCounterLogs().filter((l) => l.habitId !== id);
+  localStorage.setItem(STORAGE_KEYS.COUNTER_LOGS, JSON.stringify(cLogs));
   try {
     const deleted: string[] = JSON.parse(localStorage.getItem("habit_tracker_deleted_custom") || "[]");
     if (!deleted.includes(id)) {
@@ -145,12 +160,11 @@ export function deleteCustomHabit(id: string): void {
   } catch { /* ignore */ }
 }
 
-// Selected presets (user can toggle which presets are shown)
+// Selected presets
 export function getSelectedPresetIds(): string[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.SELECTED_PRESETS);
     if (raw) return JSON.parse(raw);
-    // Default: all presets selected
     return PRESET_HABITS.map((h) => h.id);
   } catch {
     return PRESET_HABITS.map((h) => h.id);
@@ -169,7 +183,7 @@ export function getAllHabits(): Habit[] {
   return [...presets, ...customs];
 }
 
-// Logs
+// ─── Bool Logs ─────────────────────────────────────────────────────────────
 export function getAllLogs(): HabitLog[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.LOGS);
@@ -189,7 +203,6 @@ export function getLoggedHabitsForDate(date: string): string[] {
     .map((l) => l.habitId);
 }
 
-// Backward-compatible alias
 export function getLoggedHabitsToday(): string[] {
   return getLoggedHabitsForDate(getTodayString());
 }
@@ -220,7 +233,6 @@ export function toggleHabitForDate(habitId: string, date: string): boolean {
   }
 }
 
-// Backward-compatible alias
 export function logHabit(habitId: string): void {
   logHabitForDate(habitId, getTodayString());
 }
@@ -231,7 +243,50 @@ export function toggleHabit(habitId: string): boolean {
   return toggleHabitForDate(habitId, getTodayString());
 }
 
-// Stats for push notifications
+// ─── Counter Logs ─────────────────────────────────────────────────────────
+export function getAllCounterLogs(): CounterLog[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.COUNTER_LOGS);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveAllCounterLogs(logs: CounterLog[]): void {
+  localStorage.setItem(STORAGE_KEYS.COUNTER_LOGS, JSON.stringify(logs));
+}
+
+export function getCounterForDate(habitId: string, date: string): number {
+  const logs = getAllCounterLogs();
+  const entry = logs.find((l) => l.habitId === habitId && l.date === date);
+  return entry?.count ?? 0;
+}
+
+export function setCounterForDate(habitId: string, date: string, count: number): void {
+  const logs = getAllCounterLogs();
+  const idx = logs.findIndex((l) => l.habitId === habitId && l.date === date);
+  const entry: CounterLog = { habitId, date, count, updatedAt: Date.now() };
+  if (idx >= 0) {
+    logs[idx] = entry;
+  } else {
+    logs.push(entry);
+  }
+  saveAllCounterLogs(logs);
+}
+
+export function incrementCounter(habitId: string, date: string): number {
+  const current = getCounterForDate(habitId, date);
+  const next = current + 1;
+  setCounterForDate(habitId, date, next);
+  return next;
+}
+
+export function resetCounter(habitId: string, date: string): void {
+  setCounterForDate(habitId, date, 0);
+}
+
+// ─── Stats ─────────────────────────────────────────────────────────────────
 export function getWeeklyStats(): {
   beneficial: number;
   harmful: number;
@@ -245,9 +300,7 @@ export function getWeeklyStats(): {
   const weekAgo = new Date(today);
   weekAgo.setDate(weekAgo.getDate() - 7);
 
-  const weekLogs = logs.filter(
-    (l) => new Date(l.date) >= weekAgo
-  );
+  const weekLogs = logs.filter((l) => new Date(l.date) >= weekAgo);
 
   let beneficial = 0;
   let harmful = 0;
@@ -259,17 +312,27 @@ export function getWeeklyStats(): {
     else harmful++;
   }
 
-  // Simple streak: consecutive days with at least one beneficial habit
+  // Counter habits: день считается "выполненным" если count > 0
+  const counterLogs = getAllCounterLogs();
+  for (const cl of counterLogs) {
+    if (cl.count <= 0) continue;
+    if (new Date(cl.date) < weekAgo) continue;
+    const habit = habitMap.get(cl.habitId);
+    if (!habit) continue;
+    if (habit.type === "beneficial") beneficial++;
+    else harmful++;
+  }
+
   let streak = 0;
   for (let i = 0; i < 30; i++) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
     const dateStr = d.toISOString().split("T")[0];
     const dayLogs = logs.filter((l) => l.date === dateStr);
-    const hasBeneficial = dayLogs.some((l) => {
-      const h = habitMap.get(l.habitId);
-      return h?.type === "beneficial";
-    });
+    const dayCounters = counterLogs.filter((l) => l.date === dateStr && l.count > 0);
+    const hasBeneficial =
+      dayLogs.some((l) => habitMap.get(l.habitId)?.type === "beneficial") ||
+      dayCounters.some((l) => habitMap.get(l.habitId)?.type === "beneficial");
     if (hasBeneficial) streak++;
     else break;
   }
@@ -277,23 +340,25 @@ export function getWeeklyStats(): {
   return { beneficial, harmful, streak };
 }
 
-// ─── Analytics ───────────────────────────────────────────────────────────────
+// ─── Analytics ─────────────────────────────────────────────────────────────
 
 export interface DayStats {
-  date: string;           // YYYY-MM-DD
+  date: string;
   beneficial: number;
   harmful: number;
 }
 
 export interface HabitStat {
   habit: Habit;
-  total: number;          // total logged days
-  lastWeek: number;       // last 7 days
-  streak: number;         // current consecutive days
+  total: number;
+  lastWeek: number;
+  streak: number;
   bestStreak: number;
+  // для counter:
+  totalCount?: number;
+  lastWeekCount?: number;
 }
 
-/** Returns last N days (today first) as YYYY-MM-DD strings */
 export function getLastNDates(n: number): string[] {
   const result: string[] = [];
   const today = new Date();
@@ -305,15 +370,16 @@ export function getLastNDates(n: number): string[] {
   return result;
 }
 
-/** Daily beneficial/harmful counts for the last N days (ascending order) */
 export function getDailyStats(days = 30): DayStats[] {
   const logs = getAllLogs();
+  const counterLogs = getAllCounterLogs();
   const allHabits = getAllHabits();
   const habitMap = new Map(allHabits.map((h) => [h.id, h]));
-  const dates = getLastNDates(days).reverse(); // ascending
+  const dates = getLastNDates(days).reverse();
 
   return dates.map((date) => {
     const dayLogs = logs.filter((l) => l.date === date);
+    const dayCounters = counterLogs.filter((l) => l.date === date && l.count > 0);
     let beneficial = 0;
     let harmful = 0;
     for (const log of dayLogs) {
@@ -322,27 +388,65 @@ export function getDailyStats(days = 30): DayStats[] {
       if (h.type === "beneficial") beneficial++;
       else harmful++;
     }
+    for (const cl of dayCounters) {
+      const h = habitMap.get(cl.habitId);
+      if (!h) continue;
+      if (h.type === "beneficial") beneficial++;
+      else harmful++;
+    }
     return { date, beneficial, harmful };
   });
 }
 
-/** Per-habit statistics */
 export function getHabitStats(): HabitStat[] {
   const logs = getAllLogs();
+  const counterLogs = getAllCounterLogs();
   const allHabits = getAllHabits();
   const today = new Date();
   const weekAgo = new Date(today);
   weekAgo.setDate(weekAgo.getDate() - 7);
 
   return allHabits.map((habit) => {
+    if (getTrackingType(habit) === "counter") {
+      const hLogs = counterLogs.filter((l) => l.habitId === habit.id && l.count > 0);
+      const logDates = new Set(hLogs.map((l) => l.date));
+      const total = logDates.size;
+      const lastWeek = hLogs.filter((l) => new Date(l.date) >= weekAgo).length;
+      const totalCount = counterLogs
+        .filter((l) => l.habitId === habit.id)
+        .reduce((s, l) => s + l.count, 0);
+      const lastWeekCount = hLogs
+        .filter((l) => new Date(l.date) >= weekAgo)
+        .reduce((s, l) => s + l.count, 0);
+
+      let streak = 0;
+      for (let i = 0; i < 365; i++) {
+        const d = new Date(today);
+        d.setDate(d.getDate() - i);
+        const ds = d.toISOString().split("T")[0];
+        if (logDates.has(ds)) streak++; else break;
+      }
+
+      const sortedDates = Array.from(logDates).sort();
+      let best = 0, cur = 0;
+      for (let i = 0; i < sortedDates.length; i++) {
+        if (i === 0) { cur = 1; }
+        else {
+          const diff = (new Date(sortedDates[i]).getTime() - new Date(sortedDates[i - 1]).getTime()) / 86400000;
+          cur = diff === 1 ? cur + 1 : 1;
+        }
+        if (cur > best) best = cur;
+      }
+
+      return { habit, total, lastWeek, streak, bestStreak: best, totalCount, lastWeekCount };
+    }
+
+    // bool habit
     const habitLogs = logs.filter((l) => l.habitId === habit.id);
     const logDates = new Set(habitLogs.map((l) => l.date));
-
     const total = logDates.size;
-
     const lastWeek = habitLogs.filter((l) => new Date(l.date) >= weekAgo).length;
 
-    // Current streak
     let streak = 0;
     for (let i = 0; i < 365; i++) {
       const d = new Date(today);
@@ -351,17 +455,12 @@ export function getHabitStats(): HabitStat[] {
       if (logDates.has(ds)) streak++; else break;
     }
 
-    // Best streak
     const sortedDates = Array.from(logDates).sort();
-    let best = 0;
-    let cur = 0;
+    let best = 0, cur = 0;
     for (let i = 0; i < sortedDates.length; i++) {
-      if (i === 0) {
-        cur = 1;
-      } else {
-        const prev = new Date(sortedDates[i - 1]);
-        const curr = new Date(sortedDates[i]);
-        const diff = (curr.getTime() - prev.getTime()) / 86400000;
+      if (i === 0) { cur = 1; }
+      else {
+        const diff = (new Date(sortedDates[i]).getTime() - new Date(sortedDates[i - 1]).getTime()) / 86400000;
         cur = diff === 1 ? cur + 1 : 1;
       }
       if (cur > best) best = cur;
@@ -371,19 +470,26 @@ export function getHabitStats(): HabitStat[] {
   });
 }
 
-/** Total logged days (any habit) across all time */
 export function getActiveDaysCount(): number {
   const logs = getAllLogs();
-  return new Set(logs.map((l) => l.date)).size;
+  const counterLogs = getAllCounterLogs().filter((l) => l.count > 0);
+  const dates = new Set([
+    ...logs.map((l) => l.date),
+    ...counterLogs.map((l) => l.date),
+  ]);
+  return dates.size;
 }
 
-/** Best single day: most habits logged */
 export function getBestDay(): { date: string; count: number } | null {
   const logs = getAllLogs();
-  if (logs.length === 0) return null;
+  const counterLogs = getAllCounterLogs().filter((l) => l.count > 0);
+  if (logs.length === 0 && counterLogs.length === 0) return null;
   const byDate: Record<string, number> = {};
   for (const log of logs) {
     byDate[log.date] = (byDate[log.date] ?? 0) + 1;
+  }
+  for (const cl of counterLogs) {
+    byDate[cl.date] = (byDate[cl.date] ?? 0) + 1;
   }
   const best = Object.entries(byDate).sort((a, b) => b[1] - a[1])[0];
   return best ? { date: best[0], count: best[1] } : null;
